@@ -472,10 +472,10 @@ $('oneDriveBtn').onclick=async()=>{
  try{
   await msalApp.initialize();
   let account=msalApp.getAllAccounts()[0];
-  if(!account){const login=await msalApp.loginPopup({scopes:['Files.Read','User.Read']});account=login.account;}
+  if(!account){const login=await msalApp.loginPopup({scopes:['Files.ReadWrite','User.Read']});account=login.account;}
   let token;
-  try{const silent=await msalApp.acquireTokenSilent({account,scopes:['Files.Read','User.Read']});token=silent.accessToken;}
-  catch(e){const popup=await msalApp.acquireTokenPopup({account,scopes:['Files.Read','User.Read']});token=popup.accessToken;}
+  try{const silent=await msalApp.acquireTokenSilent({account,scopes:['Files.ReadWrite','User.Read']});token=silent.accessToken;}
+  catch(e){const popup=await msalApp.acquireTokenPopup({account,scopes:['Files.ReadWrite','User.Read']});token=popup.accessToken;}
   $('oneDriveStatus').textContent='Microsoft conectado';
   oneDriveSay('Buscando Global Shipment en OneDrive…');
   const shareId=toShareId(ONEDRIVE_SHARED_URL);

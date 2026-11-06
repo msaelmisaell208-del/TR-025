@@ -32,12 +32,19 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
 <body>
 <header><div><h1>TR-025 · Control de carga</h1><small>Hoja de huellas · 66 posiciones / modo doble 132</small></div><span id="fileStatus" class="pill">Global Shipment no cargado</span></header>
 
+
+<section class="panel" id="oneDrivePanel">
+ <h3>Conexión segura · OneDrive</h3>
+ <div class="row">
+  <button id="oneDriveBtn">Conectar OneDrive y cargar Global Shipment</button>
+  <span id="oneDriveStatus" class="pill">OneDrive no conectado</span>
+ </div>
+ <small>Microsoft solicitará permiso de lectura de archivos (Files.Read) y perfil básico (User.Read). El archivo se procesa en este navegador.</small>
+ <div id="oneDriveMessage" class="muted" style="margin-top:8px">Al conectar, inicia sesión con la cuenta que tiene el Global Shipment.</div>
+</section>
+
 <section class="panel" id="authPanel">
- <h3>Conexiones seguras</h3>
- <div class="row" style="margin-bottom:10px"><button id="oneDriveBtn">Conectar OneDrive y cargar Global Shipment</button><span id="oneDriveStatus" class="pill">OneDrive no conectado</span></div>
- <small>Al conectar, Microsoft te pedirá iniciar sesión y autorizar lectura de archivos. TR-025 solo solicitará Files.Read y User.Read.</small>
- <hr style="border:0;border-top:1px solid #e7ebef;margin:12px 0">
- <h3>Acceso a registros · Supabase</h3>
+ <h3>Conexión segura · Supabase</h3>
  <div class="row" id="loginFields">
   <input id="authEmail" type="email" autocomplete="username" placeholder="Correo de Supabase">
   <input id="authPassword" type="password" autocomplete="current-password" placeholder="Contraseña" style="padding:12px;border:1px solid #cbd5df;border-radius:8px;min-width:220px;flex:1">
@@ -54,7 +61,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
 
 <section class="panel">
  <div class="row">
-  <label class="filelabel">Cargar archivo manualmente (.xlsb / .xlsx)<input id="file" type="file" accept=".xlsb,.xlsx,.xls"></label>
+  <label class="filelabel">Cargar Global Shipment (.xlsb / .xlsx)<input id="file" type="file" accept=".xlsb,.xlsx,.xls"></label>
   <label class="row"><input id="doubleMode" type="checkbox"> Modo doble (132 posiciones)</label>
   <button class="secondary" id="export">Exportar registros CSV</button>
  </div>
@@ -117,10 +124,6 @@ function norm(v){if(v===null||v===undefined)return '';let s=String(v).trim();if(
 function num(v){let n=Number(v);return Number.isFinite(n)?n:0;}
 function say(t,cls='muted'){$('message').className=cls;$('message').textContent=t;}
 const SUPABASE_URL = 'https://hglpazolyqdhizdkrlwx.supabase.co';
-const MS_CLIENT_ID = '388459b5-08e3-4720-b24b-3b28f35ed4bc';
-const ONEDRIVE_SHARE_URL = 'https://1drv.ms/x/c/833091c84c1cf675/IQDfFG_ebngJQZZSEFIMU3QhAR2ffMmZqbW5lKCG5UWDBCU?e=ijZnEX';
-const msalApp = new msal.PublicClientApplication({auth:{clientId:MS_CLIENT_ID,authority:'https://login.microsoftonline.com/common',redirectUri:location.origin+location.pathname},cache:{cacheLocation:'sessionStorage'}});
-const graphScopes = ['Files.Read','User.Read'];
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_KkXGJyytxVsVwS_x24scaA_r5ln8yuo';
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 function authStatus(message, cls='muted'){
@@ -418,41 +421,80 @@ $('departureBtn').onclick=async()=>{
  }
 };
 
-async function loadGlobalArrayBuffer(data){
- const wb=XLSX.read(data,{type:'array',cellDates:false});
- const sheetNames=Array.isArray(wb.SheetNames)?wb.SheetNames:[];
- const chosenName=sheetNames.find(n=>String(n).trim().toLowerCase()==='plan entregas') || sheetNames.find(n=>String(n).trim().toLowerCase().startsWith('plan entregas'));
- if(!chosenName){const available=sheetNames.length?sheetNames.join(', '):'el lector no devolvió nombres de hojas';throw new Error('No se identificó “Plan entregas”. Hojas detectadas: '+available+'.');}
- const sheet=wb.Sheets[chosenName];if(!sheet)throw new Error('Se detectó la hoja “'+chosenName+'”, pero no se pudo abrir.');
- const rows=XLSX.utils.sheet_to_json(sheet,{header:1,defval:null,range:6});refs.clear();
- for(let i=0;i<rows.length;i++){const r=rows[i]||[];const cmp=norm(r[0]),barcode=norm(r[1]);if(!barcode)continue;refs.set(barcode,{cmp,barcode,shipment:num(r[2]),pallets:num(r[3])});}
- $('fileStatus').textContent=`Global cargado · ${refs.size} referencias`;$('fileStatus').title='Hoja utilizada: '+chosenName;
- say(`Global Shipment cargado correctamente. ${refs.size} referencias disponibles.`,'ok');render();
+async function loadGlobalShipment(data, sourceName='Global Shipment'){
+ try{
+  const wb=XLSX.read(data,{type:'array',cellDates:false});
+  const sheetNames=Array.isArray(wb.SheetNames)?wb.SheetNames:[];
+  const chosenName=sheetNames.find(n=>String(n).trim().toLowerCase()==='plan entregas')
+    || sheetNames.find(n=>String(n).trim().toLowerCase().startsWith('plan entregas'));
+  if(!chosenName){
+   const available=sheetNames.length?sheetNames.join(', '):'el lector no devolvió nombres de hojas';
+   throw new Error('No se identificó “Plan entregas”. Hojas detectadas: '+available+'. Verifica que seleccionaste el Global Shipment correcto.');
+  }
+  const sheet=wb.Sheets[chosenName];
+  if(!sheet)throw new Error('Se detectó la hoja “'+chosenName+'”, pero no se pudo abrir.');
+  const rows=XLSX.utils.sheet_to_json(sheet,{header:1,defval:null,range:6});
+  refs.clear();
+  // La fila 7 ya contiene el primer registro; no debe omitirse.
+  for(let i=0;i<rows.length;i++){
+   const r=rows[i]||[];const cmp=norm(r[0]), barcode=norm(r[1]);
+   if(!barcode)continue;
+   refs.set(barcode,{cmp,barcode,shipment:num(r[2]),pallets:num(r[3])});
+  }
+  $('fileStatus').textContent=`Global cargado · ${refs.size} referencias`;
+  $('fileStatus').title='Hoja utilizada: '+chosenName;
+  say(`Global Shipment cargado correctamente. ${refs.size} referencias disponibles.`,'ok');
+  render();
+  return true;
+ }catch(err){say('No se pudo leer el archivo: '+err.message,'err');throw err;}
 }
-$('file').addEventListener('change',async e=>{const f=e.target.files[0];if(!f)return;try{await loadGlobalArrayBuffer(await f.arrayBuffer());}catch(err){say('No se pudo leer el archivo: '+err.message,'err');}});
-function shareIdFromUrl(url){const b64=btoa(unescape(encodeURIComponent(url))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');return 'u!'+b64;}
+$('file').addEventListener('change', async e=>{
+ const f=e.target.files[0];if(!f)return;
+ try{await loadGlobalShipment(await f.arrayBuffer(),f.name);}catch(err){}
+});
+
+// Microsoft identity platform / OneDrive personal.
+const MS_CLIENT_ID='388459b5-08e3-4720-b24b-3b28f35ed4bc';
+const ONEDRIVE_SHARED_URL='https://1drv.ms/x/c/833091c84c1cf675/IQDfFG_ebngJQZZSEFIMU3QhAR2ffMmZqbW5lKCG5UWDBCU?e=ximHVw';
+const msalApp=new msal.PublicClientApplication({
+ auth:{clientId:MS_CLIENT_ID,authority:'https://login.microsoftonline.com/common',redirectUri:location.origin+location.pathname},
+ cache:{cacheLocation:'sessionStorage'}
+});
+function oneDriveSay(message,cls='muted'){
+ $('oneDriveMessage').textContent=message;$('oneDriveMessage').className=cls;
+}
+function toShareId(url){
+ const bytes=new TextEncoder().encode(url);let binary='';bytes.forEach(b=>binary+=String.fromCharCode(b));
+ return 'u!'+btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
 $('oneDriveBtn').onclick=async()=>{
- const btn=$('oneDriveBtn');btn.disabled=true;$('oneDriveStatus').textContent='Conectando…';
+ const btn=$('oneDriveBtn');btn.disabled=true;oneDriveSay('Conectando con Microsoft…');
  try{
   await msalApp.initialize();
   let account=msalApp.getAllAccounts()[0];
-  if(!account){const login=await msalApp.loginPopup({scopes:graphScopes});account=login.account;}
+  if(!account){const login=await msalApp.loginPopup({scopes:['Files.Read','User.Read']});account=login.account;}
   let token;
-  try{token=await msalApp.acquireTokenSilent({scopes:['Files.Read'],account});}
-  catch(e){token=await msalApp.acquireTokenPopup({scopes:['Files.Read'],account});}
-  const sid=shareIdFromUrl(ONEDRIVE_SHARE_URL);
-  const response=await fetch('https://graph.microsoft.com/v1.0/shares/'+sid+'/driveItem/content',{headers:{Authorization:'Bearer '+token.accessToken}});
-  if(!response.ok)throw new Error('Microsoft Graph respondió '+response.status+'. Verifica que la cuenta tenga acceso al archivo y acepta el permiso Files.Read al iniciar sesión.');
-  const buffer=await response.arrayBuffer();await loadGlobalArrayBuffer(buffer);
-  $('oneDriveStatus').textContent='OneDrive conectado · '+(account.username||'cuenta Microsoft');
- }catch(err){$('oneDriveStatus').textContent='No se pudo conectar';say('Error de OneDrive: '+(err.message||String(err)),'err');}
- finally{btn.disabled=false;}
+  try{const silent=await msalApp.acquireTokenSilent({account,scopes:['Files.Read','User.Read']});token=silent.accessToken;}
+  catch(e){const popup=await msalApp.acquireTokenPopup({account,scopes:['Files.Read','User.Read']});token=popup.accessToken;}
+  $('oneDriveStatus').textContent='Microsoft conectado';
+  oneDriveSay('Buscando Global Shipment en OneDrive…');
+  const shareId=toShareId(ONEDRIVE_SHARED_URL);
+  const response=await fetch('https://graph.microsoft.com/v1.0/shares/'+shareId+'/driveItem/content',{headers:{Authorization:'Bearer '+token}});
+  if(!response.ok)throw new Error('Microsoft Graph respondió '+response.status+'. Verifica que la cuenta tenga acceso al archivo compartido.');
+  const buffer=await response.arrayBuffer();
+  await loadGlobalShipment(buffer,'Global Shipment de OneDrive');
+  oneDriveSay('Global Shipment cargado desde OneDrive correctamente.','ok');
+  $('oneDriveStatus').textContent='Global Shipment cargado';
+ }catch(err){
+  oneDriveSay('No se pudo conectar o cargar el archivo: '+(err.message||err),'err');
+  $('oneDriveStatus').textContent='OneDrive no conectado';
+ }finally{btn.disabled=false;}
 };
 async function addScan(){
  if(deliveryClosed){say('La entrega ya tiene salida registrada y está bloqueada.','warn');return;}
  const rawCode=norm($('scan').value);if(!rawCode)return;
  const code=rawCode.startsWith('9')?rawCode.slice(1):rawCode;
- if(!code){say('El código escaneado no contiene una referencia válida.','err');return;}
+ if(!code){say('El código escaneado está vacío después de normalizarlo.','err');return;}
  if(!refs.size){say('Primero carga el Global Shipment.','err');return;}
  if(!activeSheetId){say('Primero inicia y guarda la entrega en la sección “Entrega activa”.','warn');return;}
  const ref=refs.get(code);
@@ -482,7 +524,8 @@ async function addScan(){
 }
 $('add').onclick=addScan;$('scan').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addScan();}});
 $('focus').onclick=()=>$('scan').focus();
-$('doubleMode').onchange=e=>{if(deliveryClosed){e.target.checked=doubleMode;return;}if(scans.length){say('Cambia el modo antes de registrar escaneos o borra los registros actuales.','warn');e.target.checked=doubleMode;return;}doubleMode=e.target.checked;render();};
+$('doubleMode').onchange=e=>{if(deliveryClosed){e.target.checked=doubleMode;return;}if(e.target.checked && $('clientName').value.trim().toLowerCase()!=='nexteer'){say('El modo doble solo está disponible para el cliente Nexteer.','warn');e.target.checked=false;return;}if(scans.length){say('Cambia el modo antes de registrar escaneos o borra los registros actuales.','warn');e.target.checked=doubleMode;return;}doubleMode=e.target.checked;render();};
+$('clientName').addEventListener('change',()=>{if($('clientName').value.trim().toLowerCase()!=='nexteer' && doubleMode){doubleMode=false;$('doubleMode').checked=false;render();say('Se desactivó el modo doble porque el cliente no es Nexteer.','warn');}});
 function render(){
  const cap=doubleMode?132:66;$('map').innerHTML='';
  for(let i=0;i<cap;i++){

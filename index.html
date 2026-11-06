@@ -479,8 +479,12 @@ $('oneDriveBtn').onclick=async()=>{
   $('oneDriveStatus').textContent='Microsoft conectado';
   oneDriveSay('Buscando Global Shipment en OneDrive…');
   const shareId=toShareId(ONEDRIVE_SHARED_URL);
-  const response=await fetch('https://graph.microsoft.com/v1.0/shares/'+shareId+'/driveItem/content',{headers:{Authorization:'Bearer '+token}});
-  if(!response.ok)throw new Error('Microsoft Graph respondió '+response.status+'. Verifica que la cuenta tenga acceso al archivo compartido.');
+  const itemResponse=await fetch('https://graph.microsoft.com/v1.0/shares/'+shareId+'/driveItem',{headers:{Authorization:'Bearer '+token,Prefer:'redeemSharingLink'}});
+  if(!itemResponse.ok){const detail=await itemResponse.text();throw new Error('Microsoft Graph respondió '+itemResponse.status+' al localizar el archivo compartido. '+detail.slice(0,240));}
+  const item=await itemResponse.json();
+  if(!item['@microsoft.graph.downloadUrl'])throw new Error('Microsoft Graph encontró el archivo, pero no devolvió el enlace temporal de descarga.');
+  const response=await fetch(item['@microsoft.graph.downloadUrl']);
+  if(!response.ok)throw new Error('No se pudo descargar Global Shipment. Respuesta '+response.status+'.');
   const buffer=await response.arrayBuffer();
   await loadGlobalShipment(buffer,'Global Shipment de OneDrive');
   oneDriveSay('Global Shipment cargado desde OneDrive correctamente.','ok');

@@ -456,6 +456,7 @@ async function loadGlobalShipment(data, sourceName='Global Shipment'){
   if(!sheet)throw new Error('No se pudo abrir la hoja Plan entregas.');
 
   const rows=XLSX.utils.sheet_to_json(sheet,{header:1,defval:null,range:6});
+  console.log('FILAS GLOBAL:',rows.slice(0,12));
   refs.clear();
   const clients=new Set();
   let currentClient='';

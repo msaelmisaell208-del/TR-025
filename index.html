@@ -466,12 +466,16 @@ async function loadGlobalShipment(data, sourceName='Global Shipment'){
    const a=norm(r[0]),b=norm(r[1]);
    const c=r[2],d=r[3];
 
-   if(a && b && a.toLowerCase()===b.toLowerCase()
-      && !Number.isFinite(Number(b))){
-    currentClient=b;
-    clients.add(currentClient);
-    continue;
-   }
+ const isHeader =
+ (a.toLowerCase()==='cmp pn' && b!=='') ||
+ (a && b && a.toLowerCase()===b.toLowerCase()
+  && !Number.isFinite(Number(b)));
+
+if(isHeader){
+ currentClient=b;
+ clients.add(currentClient);
+ continue;
+}
 
    if(!currentClient || !b)continue;
 

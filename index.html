@@ -505,7 +505,15 @@ async function loadGlobalShipment(data, sourceName='Global Shipment'){
   throw err;
  }
 }
-  $('fileStatus').textContent=`Global cargado · ${refs.size} referencias`;
+
+$('file').addEventListener('change', async e=>{
+ const f=e.target.files[0];
+ if(!f)return;
+ try{
+  await loadGlobalShipment(await f.arrayBuffer(),f.name);
+ }catch(err){}
+});
+
   $('fileStatus').title='Hoja utilizada: '+chosenName;
   say(`Global Shipment cargado correctamente. ${refs.size} referencias disponibles.`,'ok');
   render();

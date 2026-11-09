@@ -70,7 +70,9 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
 <section class="panel" id="deliveryPanel">
  <h3>Entrega activa</h3>
  <div class="row">
-  <input id="clientName" type="text" placeholder="Cliente (por ejemplo, Nexteer)">
+ <select id="clientName">
+ <option value="">Selecciona un cliente</option>
+</select>
   <button id="startDelivery">Registrar llegada y guardar entrega</button>
   <button id="departureBtn" class="danger" disabled>Registrar salida y bloquear entrega</button>
   <span id="deliveryStatus" class="pill">Sin entrega activa</span>
@@ -107,7 +109,28 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
 </section>
 <section class="panel">
  <h3>Hoja de huellas</h3>
- <div id="map"></div>
+
+<div class="panel">
+ <h3>Referencias planeadas del cliente</h3>
+ <div class="table-wrap">
+  <table>
+   <thead>
+    <tr>
+     <th>CMP PN</th>
+     <th>Referencia</th>
+     <th>Cantidad planeada</th>
+     <th>Pallets</th>
+     <th>Escaneadas</th>
+    </tr>
+   </thead>
+   <tbody id="plannedSummary">
+    <tr><td colspan="5">Carga el Global Shipment y selecciona un cliente.</td></tr>
+   </tbody>
+  </table>
+ </div>
+</div>
+<div id="map"></div>
+
 </section>
 <section class="panel">
  <h3>Referencias registradas</h3><p class="muted">“Quitar referencia” elimina todos los escaneos de esa referencia y acomoda las posiciones restantes.</p>
@@ -421,26 +444,66 @@ $('departureBtn').onclick=async()=>{
  }
 };
 
+
 async function loadGlobalShipment(data, sourceName='Global Shipment'){
  try{
   const wb=XLSX.read(data,{type:'array',cellDates:false});
   const sheetNames=Array.isArray(wb.SheetNames)?wb.SheetNames:[];
   const chosenName=sheetNames.find(n=>String(n).trim().toLowerCase()==='plan entregas')
-    || sheetNames.find(n=>String(n).trim().toLowerCase().startsWith('plan entregas'));
-  if(!chosenName){
-   const available=sheetNames.length?sheetNames.join(', '):'el lector no devolvió nombres de hojas';
-   throw new Error('No se identificó “Plan entregas”. Hojas detectadas: '+available+'. Verifica que seleccionaste el Global Shipment correcto.');
-  }
+    ||sheetNames.find(n=>String(n).trim().toLowerCase().startsWith('plan entregas'));
+  if(!chosenName)throw new Error('No se identificó la hoja Plan entregas.');
   const sheet=wb.Sheets[chosenName];
-  if(!sheet)throw new Error('Se detectó la hoja “'+chosenName+'”, pero no se pudo abrir.');
+  if(!sheet)throw new Error('No se pudo abrir la hoja Plan entregas.');
+
   const rows=XLSX.utils.sheet_to_json(sheet,{header:1,defval:null,range:6});
   refs.clear();
-  // La fila 7 ya contiene el primer registro; no debe omitirse.
+  const clients=new Set();
+  let currentClient='';
+
   for(let i=0;i<rows.length;i++){
-   const r=rows[i]||[];const cmp=norm(r[0]), barcode=norm(r[1]);
-   if(!barcode)continue;
-   refs.set(barcode,{cmp,barcode,shipment:num(r[2]),pallets:num(r[3])});
+   const r=rows[i]||[];
+   const a=norm(r[0]),b=norm(r[1]);
+   const c=r[2],d=r[3];
+
+   if(a && b && a.toLowerCase()===b.toLowerCase()
+      && !Number.isFinite(Number(b))){
+    currentClient=b;
+    clients.add(currentClient);
+    continue;
+   }
+
+   if(!currentClient || !b)continue;
+
+   refs.set(b,{
+    cmp:a,
+    barcode:b,
+    shipment:num(c),
+    pallets:num(d),
+    client:currentClient
+   });
   }
+
+  const selector=$('clientName');
+  const previous=selector.value;
+  selector.innerHTML=[...clients].map(c=>
+   `<option value="${c}">${c}</option>`
+  ).join('');
+
+  if([...clients].some(c=>c.toLowerCase()===previous.toLowerCase()))
+   selector.value=[...clients].find(c=>c.toLowerCase()===previous.toLowerCase());
+  else if([...clients].some(c=>c.toLowerCase()==='nexteer'))
+   selector.value=[...clients].find(c=>c.toLowerCase()==='nexteer');
+
+  $('fileStatus').textContent=`Global cargado · ${refs.size} referencias · ${clients.size} clientes`;
+  $('fileStatus').title='Hoja utilizada: '+chosenName;
+  say(`Global Shipment cargado: ${refs.size} referencias de ${clients.size} clientes.`,'ok');
+  render();
+  return true;
+ }catch(err){
+  say('No se pudo leer el archivo: '+err.message,'err');
+  throw err;
+ }
+}
   $('fileStatus').textContent=`Global cargado · ${refs.size} referencias`;
   $('fileStatus').title='Hoja utilizada: '+chosenName;
   say(`Global Shipment cargado correctamente. ${refs.size} referencias disponibles.`,'ok');
@@ -500,9 +563,19 @@ async function addScan(){
  if(!code){say('El código escaneado está vacío después de normalizarlo.','err');return;}
  if(!refs.size){say('Primero carga el Global Shipment.','err');return;}
  if(!activeSheetId){say('Primero inicia y guarda la entrega en la sección “Entrega activa”.','warn');return;}
- const ref=refs.get(code);
- if(!ref){say(`Código leído: ${rawCode}. Después de quitar únicamente el 9 inicial (si existía) se buscó ${code}, pero no aparece en la columna B.`,'err');$('scan').select();return;}
+ 
+const ref=refs.get(code);
+ if(!ref){
+  say(`La referencia ${code} no aparece en Global Shipment.`,'err');
+  $('scan').select();return;
+ }
+ const selectedClient=$('clientName').value.trim().toLowerCase();
+ if(!ref.client || ref.client.trim().toLowerCase()!==selectedClient){
+  say(`La referencia ${code} pertenece a ${ref.client||'otro cliente'}, no a ${$('clientName').value}.`,'err');
+  $('scan').select();return;
+ }
  const limit=doubleMode?132:66;
+
  if(scans.length>=limit){say(`La hoja está llena: máximo ${limit} posiciones.`,'err');return;}
  const same=scans.filter(s=>s.barcode===code).length+1;
  const plannedPositions=Math.ceil(ref.pallets);
@@ -528,8 +601,49 @@ async function addScan(){
 $('add').onclick=addScan;$('scan').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addScan();}});
 $('focus').onclick=()=>$('scan').focus();
 $('doubleMode').onchange=e=>{if(deliveryClosed){e.target.checked=doubleMode;return;}if(e.target.checked && $('clientName').value.trim().toLowerCase()!=='nexteer'){say('El modo doble solo está disponible para el cliente Nexteer.','warn');e.target.checked=false;return;}if(scans.length){say('Cambia el modo antes de registrar escaneos o borra los registros actuales.','warn');e.target.checked=doubleMode;return;}doubleMode=e.target.checked;render();};
-$('clientName').addEventListener('change',()=>{if($('clientName').value.trim().toLowerCase()!=='nexteer' && doubleMode){doubleMode=false;$('doubleMode').checked=false;render();say('Se desactivó el modo doble porque el cliente no es Nexteer.','warn');}});
-function render(){
+
+$('clientName').addEventListener('change',()=>{
+ if($('clientName').value.trim().toLowerCase()!=='nexteer' && doubleMode){
+  doubleMode=false;
+  $('doubleMode').checked=false;
+  say('Se desactivó el modo doble porque el cliente no es Nexteer.','warn');
+ }
+ render();
+ updatePlannedSummary();
+});
+
+
+function updatePlannedSummary(){
+ const body=$('plannedSummary');
+ if(!body)return;
+
+ const client=$('clientName').value.trim().toLowerCase();
+ if(!client){
+  body.innerHTML='<tr><td colspan="5">Selecciona un cliente.</td></tr>';
+  return;
+ }
+
+ const planned=[...refs.values()].filter(r=>
+  r.client && r.client.trim().toLowerCase()===client
+ );
+
+ if(!planned.length){
+  body.innerHTML='<tr><td colspan="5">No hay referencias para este cliente.</td></tr>';
+  return;
+ }
+
+ body.innerHTML=planned.map(r=>{
+  const scanned=scans.filter(s=>s.barcode===r.barcode).length;
+  return `<tr>
+   <td>${r.cmp}</td>
+   <td>${r.barcode}</td>
+   <td>${r.shipment.toLocaleString('es-MX')}</td>
+   <td>${r.pallets}</td>
+   <td>${scanned}</td>
+  </tr>`;
+ }).join('');
+}
+
  const cap=doubleMode?132:66;$('map').innerHTML='';
  for(let i=0;i<cap;i++){
   const s=scans[i], el=document.createElement('div');el.className='slot'+(doubleMode?' double':'')+(s?' filled':'')+(s&&s.partial?' partial':'');
@@ -545,7 +659,7 @@ function render(){
  $('totalScans').textContent=scans.length;$('freeSlots').textContent=cap-scans.length;
  const grouped=new Map();for(const s of scans){const k=s.barcode;if(!grouped.has(k))grouped.set(k,{...s,count:0});grouped.get(k).count++;}
  $('refCount').textContent=grouped.size;
- $('summary').innerHTML=grouped.size?[...grouped.values()].map(r=>`<tr><td>${r.cmp}</td><td>${r.barcode}</td><td>${r.shipment.toLocaleString('es-MX')}</td><td>${r.pallets}</td><td>${r.plannedPositions}</td><td>${r.count}${r.count>r.plannedPositions?' ⚠':''}</td><td><button class="danger" data-remove-ref="${r.barcode}">Quitar referencia</button></td></tr>`).join(''):'<tr><td colspan="7" class="muted">Sin registros</td></tr>';
+ $('summary').innerHTML=updatePlannedSummary();grouped.size?[...grouped.values()].map(r=>`<tr><td>${r.cmp}</td><td>${r.barcode}</td><td>${r.shipment.toLocaleString('es-MX')}</td><td>${r.pallets}</td><td>${r.plannedPositions}</td><td>${r.count}${r.count>r.plannedPositions?' ⚠':''}</td><td><button class="danger" data-remove-ref="${r.barcode}">Quitar referencia</button></td></tr>`).join(''):'<tr><td colspan="7" class="muted">Sin registros</td></tr>';
 }
 $('summary').addEventListener('click',e=>{
  const btn=e.target.closest('button[data-remove-ref]');if(!btn)return;

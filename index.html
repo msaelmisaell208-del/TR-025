@@ -636,6 +636,7 @@ function updatePlannedSummary(){
  }).join('');
 }
 
+ function render(){
  const cap=doubleMode?132:66;$('map').innerHTML='';
  for(let i=0;i<cap;i++){
   const s=scans[i], el=document.createElement('div');el.className='slot'+(doubleMode?' double':'')+(s?' filled':'')+(s&&s.partial?' partial':'');

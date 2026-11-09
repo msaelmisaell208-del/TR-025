@@ -494,26 +494,9 @@ async function loadGlobalShipment(data, sourceName='Global Shipment'){
    selector.value=[...clients].find(c=>c.toLowerCase()===previous.toLowerCase());
   else if([...clients].some(c=>c.toLowerCase()==='nexteer'))
    selector.value=[...clients].find(c=>c.toLowerCase()==='nexteer');
-
   $('fileStatus').textContent=`Global cargado · ${refs.size} referencias · ${clients.size} clientes`;
-  $('fileStatus').title='Hoja utilizada: '+chosenName;
-  say(`Global Shipment cargado: ${refs.size} referencias de ${clients.size} clientes.`,'ok');
-  render();
-  return true;
- }catch(err){
-  say('No se pudo leer el archivo: '+err.message,'err');
-  throw err;
- }
-}
-
 $('file').addEventListener('change', async e=>{
- const f=e.target.files[0];
- if(!f)return;
- try{
-  await loadGlobalShipment(await f.arrayBuffer(),f.name);
- }catch(err){}
 });
-
   $('fileStatus').title='Hoja utilizada: '+chosenName;
   say(`Global Shipment cargado correctamente. ${refs.size} referencias disponibles.`,'ok');
   render();

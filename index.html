@@ -663,7 +663,8 @@ function updatePlannedSummary(){
  $('totalScans').textContent=scans.length;$('freeSlots').textContent=cap-scans.length;
  const grouped=new Map();for(const s of scans){const k=s.barcode;if(!grouped.has(k))grouped.set(k,{...s,count:0});grouped.get(k).count++;}
  $('refCount').textContent=grouped.size;
- $('summary').innerHTML=updatePlannedSummary();grouped.size?[...grouped.values()].map(r=>`<tr><td>${r.cmp}</td><td>${r.barcode}</td><td>${r.shipment.toLocaleString('es-MX')}</td><td>${r.pallets}</td><td>${r.plannedPositions}</td><td>${r.count}${r.count>r.plannedPositions?' ⚠':''}</td><td><button class="danger" data-remove-ref="${r.barcode}">Quitar referencia</button></td></tr>`).join(''):'<tr><td colspan="7" class="muted">Sin registros</td></tr>';
+updatePlannedSummary();
+$('summary').innerHTML=grouped.size?[...grouped.values()].map(r=>`<tr><td>${r.cmp}</td><td>${r.barcode}</td><td>${r.shipment.toLocaleString('es-MX')}</td><td>${r.pallets}</td><td>${r.plannedPositions}</td><td>${r.count}${r.count>r.plannedPositions?' ⚠':''}</td><td><button class="danger" data-remove-ref="${r.barcode}">Quitar referencia</button></td></tr>`).join(''):'<tr><td colspan="7" class="muted">Sin registros</td></tr>';
 }
 $('summary').addEventListener('click',e=>{
  const btn=e.target.closest('button[data-remove-ref]');if(!btn)return;

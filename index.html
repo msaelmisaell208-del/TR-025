@@ -472,7 +472,28 @@ const isHeader =
   && !Number.isFinite(Number(b)));
 
 if(isHeader){
+const isHeader =
+ (a.toLowerCase()==='cmp pn' && b!=='') ||
+ (a && b && a.toLowerCase()===b.toLowerCase()
+  && !Number.isFinite(Number(b)));
+
+if(isHeader){
  console.log('CLIENTE DETECTADO:', a, '|', b);
+ currentClient=b;
+ clients.add(currentClient);
+ continue;
+}
+
+if(!currentClient || !b)continue;
+
+refs.set(b,{
+ cmp:a,
+ barcode:b,
+ shipment:num(c),
+ pallets:num(d),
+ client:currentClient
+});
+}
  currentClient=b;
 
  clients.add(currentClient);
@@ -501,8 +522,7 @@ if(isHeader){
   else if([...clients].some(c=>c.toLowerCase()==='nexteer'))
    selector.value=[...clients].find(c=>c.toLowerCase()==='nexteer');
   $('fileStatus').textContent=`Global cargado · ${refs.size} referencias · ${clients.size} clientes`;
-$('file').addEventListener('change', async e=>{
-});
+
   $('fileStatus').title='Hoja utilizada: '+chosenName;
   say(`Global Shipment cargado correctamente. ${refs.size} referencias disponibles.`,'ok');
   render();

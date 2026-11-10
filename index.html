@@ -445,18 +445,21 @@ $('departureBtn').onclick=async()=>{
 };
 
 
+
 async function loadGlobalShipment(data, sourceName='Global Shipment'){
  try{
   const wb=XLSX.read(data,{type:'array',cellDates:false});
   const sheetNames=Array.isArray(wb.SheetNames)?wb.SheetNames:[];
   const chosenName=sheetNames.find(n=>String(n).trim().toLowerCase()==='plan entregas')
-    ||sheetNames.find(n=>String(n).trim().toLowerCase().startsWith('plan entregas'));
+   ||sheetNames.find(n=>String(n).trim().toLowerCase().startsWith('plan entregas'));
+
   if(!chosenName)throw new Error('No se identificó la hoja Plan entregas.');
+
   const sheet=wb.Sheets[chosenName];
   if(!sheet)throw new Error('No se pudo abrir la hoja Plan entregas.');
 
   const rows=XLSX.utils.sheet_to_json(sheet,{header:1,defval:null,range:0});
-  console.log('FILAS GLOBAL:',rows.slice(0,12));
+
   refs.clear();
   const clients=new Set();
   let currentClient='';
@@ -466,39 +469,14 @@ async function loadGlobalShipment(data, sourceName='Global Shipment'){
    const a=norm(r[0]),b=norm(r[1]);
    const c=r[2],d=r[3];
 
-const isHeader =
- (a.toLowerCase()==='cmp pn' && b!=='') ||
- (a && b && a.toLowerCase()===b.toLowerCase()
-  && !Number.isFinite(Number(b)));
+   const isHeader=String(a).trim().toLowerCase()==='cmp pn' && b!=='';
 
-if(isHeader){
-const isHeader =
- (a.toLowerCase()==='cmp pn' && b!=='') ||
- (a && b && a.toLowerCase()===b.toLowerCase()
-  && !Number.isFinite(Number(b)));
-
-if(isHeader){
- console.log('CLIENTE DETECTADO:', a, '|', b);
- currentClient=b;
- clients.add(currentClient);
- continue;
-}
-
-if(!currentClient || !b)continue;
-
-refs.set(b,{
- cmp:a,
- barcode:b,
- shipment:num(c),
- pallets:num(d),
- client:currentClient
-});
-}
- currentClient=b;
-
- clients.add(currentClient);
- continue;
-
+   if(isHeader){
+    currentClient=b;
+    clients.add(currentClient);
+    console.log('CLIENTE DETECTADO:',currentClient);
+    continue;
+   }
 
    if(!currentClient || !b)continue;
 
@@ -513,6 +491,7 @@ refs.set(b,{
 
   const selector=$('clientName');
   const previous=selector.value;
+
   selector.innerHTML=[...clients].map(c=>
    `<option value="${c}">${c}</option>`
   ).join('');
@@ -521,14 +500,20 @@ refs.set(b,{
    selector.value=[...clients].find(c=>c.toLowerCase()===previous.toLowerCase());
   else if([...clients].some(c=>c.toLowerCase()==='nexteer'))
    selector.value=[...clients].find(c=>c.toLowerCase()==='nexteer');
-  $('fileStatus').textContent=`Global cargado · ${refs.size} referencias · ${clients.size} clientes`;
 
+  $('fileStatus').textContent=`Global cargado · ${refs.size} referencias · ${clients.size} clientes`;
   $('fileStatus').title='Hoja utilizada: '+chosenName;
+
   say(`Global Shipment cargado correctamente. ${refs.size} referencias disponibles.`,'ok');
   render();
   return true;
- }catch(err){say('No se pudo leer el archivo: '+err.message,'err');throw err;}
+
+ }catch(err){
+  say('No se pudo leer el archivo: '+err.message,'err');
+  throw err;
+ }
 }
+
 $('file').addEventListener('change', async e=>{
  const f=e.target.files[0];if(!f)return;
  try{await loadGlobalShipment(await f.arrayBuffer(),f.name);}catch(err){}

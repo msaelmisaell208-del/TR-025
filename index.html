@@ -562,7 +562,7 @@ $('oneDriveBtn').onclick=async()=>{
 async function addScan(){
  if(deliveryClosed){say('La entrega ya tiene salida registrada y está bloqueada.','warn');return;}
  const rawCode=norm($('scan').value);if(!rawCode)return;
- const code=rawCode.startsWith('9')?rawCode.slice(1):rawCode;
+const code=rawCode.slice(4);
  if(!code){say('El código escaneado está vacío después de normalizarlo.','err');return;}
  if(!refs.size){say('Primero carga el Global Shipment.','err');return;}
  if(!activeSheetId){say('Primero inicia y guarda la entrega en la sección “Entrega activa”.','warn');return;}

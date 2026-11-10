@@ -466,8 +466,12 @@ async function loadGlobalShipment(data, sourceName='Global Shipment'){
    const a=norm(r[0]),b=norm(r[1]);
    const c=r[2],d=r[3];
 
- const isHeader =
-  if(isHeader){
+const isHeader =
+ (a.toLowerCase()==='cmp pn' && b!=='') ||
+ (a && b && a.toLowerCase()===b.toLowerCase()
+  && !Number.isFinite(Number(b)));
+
+if(isHeader){
  console.log('CLIENTE DETECTADO:', a, '|', b);
  currentClient=b;
  clients.add(currentClient);

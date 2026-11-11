@@ -920,11 +920,89 @@ $('clear').onclick=async()=>{
   say('No se pudieron borrar los escaneos: '+err.message,'err');
  }
 };
-$('export').onclick=()=>{
- const header=['Posicion','CMP PN','Referencia columna B','Shipment planned','Pallets columna D','Posiciones plan','Parcial'];
- const lines=[header,...scans.map(s=>[s.position,s.cmp,s.barcode,s.shipment,s.pallets,s.plannedPositions,s.partial?'Sí':'No'])];
- const csv=lines.map(r=>r.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(';')).join('\\r\\n');
- const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\\ufeff'+csv],{type:'text/csv;charset=utf-8'}));a.download='TR-025-registros.csv';a.click();URL.revokeObjectURL(a.href);
+$('export').onclick=async()=>{
+ try{
+  if(!activeSheetId)throw new Error('No hay una entrega seleccionada.');
+
+  const {data:sheet,error:sheetError}=await supabaseClient
+   .from('tr025_sheets')
+   .select('client,responsible,status,arrival_at,departure_at,observations')
+   .eq('id',activeSheetId)
+   .single();
+
+  if(sheetError)throw sheetError;
+
+  const fecha=v=>v
+   ?new Date(v).toLocaleString('es-MX')
+   :'';
+
+  const metadata=[
+   ['DATOS DE ENTREGA',''],
+   ['Cliente',sheet.client||''],
+   ['Responsable',sheet.responsible||''],
+   ['Estado',sheet.status||''],
+   ['Fecha y hora de llegada',fecha(sheet.arrival_at)],
+   ['Fecha y hora de salida',fecha(sheet.departure_at)],
+   ['Observaciones',sheet.observations||''],
+   ['Total de registros',scans.length],
+   ['Huellas ocupadas',new Set(scans.map(s=>Math.ceil(Number(s.position)/2))).size],
+   ['','','']
+  ];
+
+  const header=[
+   'Huella',
+   'Posicion',
+   'Nivel',
+   'Tipo de huella',
+   'CMP PN',
+   'Referencia columna B',
+   'Codigo original escaneado',
+   'Shipment planned',
+   'Pallets columna D',
+   'Posiciones plan',
+   'Parcial'
+  ];
+
+  const details=scans.map(s=>{
+   const pos=Number(s.position);
+   const footprint=Math.ceil(pos/2);
+   const level=pos%2===1?'A':'B';
+   const type=s.stackType||stackLayout[footprint-1]||'sencillo';
+
+   return [
+    footprint,
+    pos,
+    type==='doble'?level:'Sencilla',
+    type,
+    s.cmp,
+    s.barcode,
+    s.barcodeOriginal||s.barcode||'',
+    s.shipment,
+    s.pallets,
+    s.plannedPositions,
+    s.partial?'Sí':'No'
+   ];
+  });
+
+  const lines=[...metadata,header,...details];
+
+  const csv=lines.map(r=>
+   r.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(';')
+  ).join('\r\n');
+
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(
+   new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'})
+  );
+  a.download='TR-025-reporte-entrega.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+
+  say('Reporte de entrega exportado correctamente.','ok');
+
+ }catch(err){
+  say('No se pudo exportar el reporte: '+err.message,'err');
+ }
 };
 render();
 </script>

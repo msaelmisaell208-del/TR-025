@@ -816,6 +816,11 @@ function render(){
 el.addEventListener('click',async()=>{
  if(deliveryClosed)return;
 
+ if($('clientName').value.trim().toLowerCase()!=='nexteer'){
+  say('El modo doble solo está disponible para el cliente Nexteer.','warn');
+  return;
+ }
+
  if(scans.some(x=>Math.ceil(Number(x.position)/2)===i+1)){
   say('No puedes cambiar el tipo de una huella que ya tiene piezas asignadas.','warn');
   return;

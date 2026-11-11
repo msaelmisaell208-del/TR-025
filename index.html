@@ -141,10 +141,21 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
  <div class="row" style="margin-top:10px"><label>Responsable / nómina <input id="operator" type="text" placeholder="Nombre o nómina"></label><button class="danger" id="clear">Borrar todos los escaneos</button></div>
 </section>
 <script>
-let refs=new Map(), scans=[], doubleMode=false, activeSheetId=null, deliveryClosed=false;
+
+let refs=new Map(), scans=[], doubleMode=false, stackLayout=Array(66).fill('sencillo'), activeSheetId=null, deliveryClosed=false;
+ let activeFootprint=null;
+
 const $=id=>document.getElementById(id);
 function norm(v){if(v===null||v===undefined)return '';let s=String(v).trim();if(/^\\d+\\.0+$/.test(s))s=s.split('.')[0];return s;}
 function num(v){let n=Number(v);return Number.isFinite(n)?n:0;}
+ 
+function normalizeStackLayout(value){
+ if(!Array.isArray(value)||value.length!==66){
+  return Array(66).fill('sencillo');
+ }
+ return value.map(v=>v==='doble'?'doble':'sencillo');
+}
+
 function say(t,cls='muted'){$('message').className=cls;$('message').textContent=t;}
 const SUPABASE_URL = 'https://hglpazolyqdhizdkrlwx.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_KkXGJyytxVsVwS_x24scaA_r5ln8yuo';
@@ -186,11 +197,52 @@ async function restoreClosedDelivery(sheetId){
   if(sessionError)throw sessionError;
   if(!sessionData.session)throw new Error('Inicia sesión para recuperar el estado.');
   const {data,error}=await supabaseClient.from('tr025_sheets')
-   .select('id,client,responsible,status,arrival_at,departure_at,observations')
+   .select('id,client,responsible,status,arrival_at,departure_at,observations,stack_layout')
    .eq('id',sheetId)
    .single();
   if(error)throw error;
   if(!data.departure_at)throw new Error('Esta entrega no tiene salida registrada; no se puede recuperar como cerrada.');
+  stackLayout=normalizeStackLayout(data.stack_layout);
+  const {data:rows,error:rowsError}=await supabaseClient
+ .from('tr025_scans')
+ .select('id,position,barcode_original,barcode_match,cmp_pn,shipment_planned,pallets_expected,is_partial,stack_type')
+ .eq('sheet_id',sheetId)
+ .order('position',{ascending:true});
+
+if(rowsError)throw rowsError;
+
+const hasSavedLayout=Array.isArray(data.stack_layout)&&data.stack_layout.length===66;
+const types=[...new Set((rows||[]).map(r=>r.stack_type||'sencillo'))];
+
+stackLayout=hasSavedLayout
+ ? normalizeStackLayout(data.stack_layout)
+ : (types.length===1&&types[0]==='doble'?Array(66).fill('doble'):Array(66).fill('sencillo'));
+
+const counts=new Map();
+scans=(rows||[]).map(r=>{
+ const code=String(r.barcode_match||'');
+ const n=(counts.get(code)||0)+1;
+ counts.set(code,n);
+ const pallets=Number(r.pallets_expected)||0;
+
+ return {
+  id:r.id,
+  barcode:code,
+  barcodeOriginal:r.barcode_original||'',
+  cmp:r.cmp_pn||'',
+  shipment:Number(r.shipment_planned)||0,
+  pallets,
+  plannedPositions:Math.ceil(pallets),
+  number:n,
+  position:hasSavedLayout
+ ? Number(r.position)
+ : (r.stack_type||'sencillo')==='doble'
+  ? Number(r.position)
+  : (Number(r.position)*2-1),
+  partial:!!r.is_partial,
+  stackType:r.stack_type||'sencillo'
+ };
+});
   activeSheetId=data.id;
   deliveryClosed=true;
   $('clientName').value=data.client||'';
@@ -210,6 +262,7 @@ async function restoreClosedDelivery(sheetId){
   $('observations').disabled=true;
   $('deliveryStatus').textContent='Entrega cerrada · bloqueo recuperado';
   authStatus('Estado cerrado recuperado desde Supabase. Esta entrega permanece bloqueada.','ok');
+  render();
   $('deliveryPanel').scrollIntoView({behavior:'smooth',block:'center'});
  }catch(err){
   authStatus('No se pudo recuperar el bloqueo: '+err.message,'err');
@@ -225,7 +278,7 @@ async function restoreOpenDelivery(sheetId){
    if(!confirm('Ya hay una entrega cargada en esta pantalla. ¿Quieres cambiar a la entrega seleccionada?'))return;
   }
   const {data:sheet,error:sheetError}=await supabaseClient.from('tr025_sheets')
-   .select('id,client,responsible,status,arrival_at,departure_at,observations')
+   .select('id,client,responsible,status,arrival_at,departure_at,observations,stack_layout')
    .eq('id',sheetId)
    .single();
   if(sheetError)throw sheetError;
@@ -237,13 +290,17 @@ async function restoreOpenDelivery(sheetId){
    .order('position',{ascending:true});
   if(scansError)throw scansError;
 
-  const types=[...new Set((rows||[]).map(r=>r.stack_type||'sencillo'))];
-  if(types.some(t=>t!=='sencillo'&&t!=='doble'))throw new Error('La entrega contiene un tipo de estiba no reconocido.');
-  if(types.length>1)throw new Error('Esta entrega contiene escaneos sencillos y dobles mezclados. La versión actual no puede reconstruir esa distribución sin riesgo de mover posiciones.');
-  if((rows||[]).length>132)throw new Error('La entrega contiene más de 132 escaneos; no se puede representar en esta hoja.');
+ const types=[...new Set((rows||[]).map(r=>r.stack_type||'sencillo'))];
+if(types.some(t=>t!=='sencillo'&&t!=='doble'))throw new Error('La entrega contiene un tipo de estiba no reconocido.');
+if((rows||[]).length>132)throw new Error('La entrega contiene más de 132 escaneos; no se puede representar en esta hoja.');
 
+const hasSavedLayout=Array.isArray(sheet.stack_layout)&&sheet.stack_layout.length===66;
+stackLayout=hasSavedLayout
+ ? normalizeStackLayout(sheet.stack_layout)
+ : (types.length===1&&types[0]==='doble'?Array(66).fill('doble'):Array(66).fill('sencillo'));
   const restored=[];
   const counts=new Map();
+ 
   for(const r of (rows||[])){
    const code=String(r.barcode_match||'');
    const n=(counts.get(code)||0)+1;
@@ -258,17 +315,21 @@ async function restoreOpenDelivery(sheetId){
     pallets,
     plannedPositions:Math.ceil(pallets),
     number:n,
-    position:Number(r.position)||restored.length+1,
+   position:Array.isArray(sheet.stack_layout)&&sheet.stack_layout.length===66
+ ? (Number(r.position)||restored.length+1)
+ : (r.stack_type||'sencillo')==='doble'
+  ? (Number(r.position)||restored.length+1)
+  : ((Number(r.position)||restored.length+1)*2-1),
     partial:!!r.is_partial,
     stackType:r.stack_type||'sencillo'
    });
   }
 
-  scans=restored;
-  activeSheetId=sheet.id;
-  deliveryClosed=false;
-  doubleMode=types.length===1 && types[0]==='doble';
-  $('doubleMode').checked=doubleMode;
+scans=restored;
+activeSheetId=sheet.id;
+deliveryClosed=false;
+doubleMode=false;
+$('doubleMode').checked=false;
   $('clientName').value=sheet.client||'';
   $('operator').value=sheet.responsible||'';
   $('observations').value=sheet.observations||'';
@@ -395,8 +456,12 @@ $('startDelivery').onclick=async()=>{
  if(scans.length){$('deliveryStatus').textContent='Borra los escaneos locales antes de iniciar otra entrega';return;}
  $('startDelivery').disabled=true;
  try{
-  const {data,error}=await supabaseClient.from('tr025_sheets').insert({
-   client, responsible: responsible || null, status:'open', arrival_at:new Date().toISOString()
+ const {data,error}=await supabaseClient.from('tr025_sheets').insert({
+   client,
+   responsible: responsible || null,
+   status:'open',
+   arrival_at:new Date().toISOString(),
+   stack_layout:stackLayout
   }).select('id').single();
   if(error)throw error;
   activeSheetId=data.id;
@@ -420,7 +485,12 @@ $('departureBtn').onclick=async()=>{
  $('deliveryStatus').textContent='Guardando salida…';
  try{
   const {data,error}=await supabaseClient.from('tr025_sheets')
-   .update({departure_at:new Date().toISOString(), responsible:$('operator').value.trim()||null, observations:$('observations').value.trim()||null})
+   .update({
+ departure_at:new Date().toISOString(),
+ responsible:$('operator').value.trim()||null,
+ observations:$('observations').value.trim()||null,
+ stack_layout:stackLayout
+})
    .eq('id',activeSheetId)
    .select('id')
    .single();
@@ -560,57 +630,126 @@ $('oneDriveBtn').onclick=async()=>{
  }finally{btn.disabled=false;}
 };
 async function addScan(){
- if(deliveryClosed){say('La entrega ya tiene salida registrada y está bloqueada.','warn');return;}
- const rawCode=norm($('scan').value);if(!rawCode)return;
-const code=rawCode.slice(4);
- if(!code){say('El código escaneado está vacío después de normalizarlo.','err');return;}
- if(!refs.size){say('Primero carga el Global Shipment.','err');return;}
- if(!activeSheetId){say('Primero inicia y guarda la entrega en la sección “Entrega activa”.','warn');return;}
- 
-const ref=refs.get(code);
+ if(deliveryClosed){
+  say('La entrega ya tiene salida registrada y está bloqueada.','warn');
+  return;
+ }
+
+ const rawCode=norm($('scan').value);
+ if(!rawCode)return;
+
+ const code=rawCode.slice(4);
+
+ if(!code){
+  say('El código escaneado está vacío después de normalizarlo.','err');
+  return;
+ }
+ if(!refs.size){
+  say('Primero carga el Global Shipment.','err');
+  return;
+ }
+ if(!activeSheetId){
+  say('Primero inicia y guarda la entrega en la sección “Entrega activa”.','warn');
+  return;
+ }
+
+ const ref=refs.get(code);
  if(!ref){
   say(`La referencia ${code} no aparece en Global Shipment.`,'err');
-  $('scan').select();return;
+  $('scan').select();
+  return;
  }
+
  const selectedClient=$('clientName').value.trim().toLowerCase();
  if(!ref.client || ref.client.trim().toLowerCase()!==selectedClient){
   say(`La referencia ${code} pertenece a ${ref.client||'otro cliente'}, no a ${$('clientName').value}.`,'err');
-  $('scan').select();return;
+  $('scan').select();
+  return;
  }
- const limit=doubleMode?132:66;
 
- if(scans.length>=limit){say(`La hoja está llena: máximo ${limit} posiciones.`,'err');return;}
+ let position=null;
+
+ for(let i=0;i<66;i++){
+  const first=i*2+1;
+  const second=first+1;
+
+  if(!scans.some(s=>Number(s.position)===first)){
+   position=first;
+   break;
+  }
+
+  if(stackLayout[i]==='doble' && !scans.some(s=>Number(s.position)===second)){
+   position=second;
+   break;
+  }
+ }
+
+ if(position===null){
+  say('La hoja está llena. No hay posiciones libres.','err');
+  return;
+ }
+
+ const footprint=Math.ceil(position/2);
+ const level=position%2===1?'A':'B';
+ const stackType=stackLayout[footprint-1];
+
  const same=scans.filter(s=>s.barcode===code).length+1;
  const plannedPositions=Math.ceil(ref.pallets);
- const scan={id:Date.now()+Math.random(),barcode:code,cmp:ref.cmp,shipment:ref.shipment,pallets:ref.pallets,plannedPositions,number:same,position:scans.length+1,partial:ref.pallets%1!==0 && same===plannedPositions};
+
+ const scan={
+  id:Date.now()+Math.random(),
+  barcode:code,
+  cmp:ref.cmp,
+  shipment:ref.shipment,
+  pallets:ref.pallets,
+  plannedPositions,
+  number:same,
+  position,
+  partial:ref.pallets%1!==0 && same===plannedPositions,
+  stackType
+ };
+
  scans.push(scan);
+
  try{
-  const {error}=await supabaseClient.from('tr025_scans').insert({
-   sheet_id:activeSheetId, position:scan.position, barcode_original:rawCode,
-   barcode_match:code, cmp_pn:ref.cmp, shipment_planned:ref.shipment,
-   pallets_expected:ref.pallets, is_partial:scan.partial,
-   device:'TR-025', stack_type:doubleMode?'doble':'sencillo'
-  });
+ const {data,error}=await supabaseClient.from('tr025_scans').insert({
+   sheet_id:activeSheetId,
+   position:scan.position,
+   barcode_original:rawCode,
+   barcode_match:code,
+   cmp_pn:ref.cmp,
+   shipment_planned:ref.shipment,
+   pallets_expected:ref.pallets,
+   is_partial:scan.partial,
+   device:'TR-025',
+   stack_type:stackType
+  }).select('id').single();
+
   if(error)throw error;
+  scan.id=data.id;
+
  }catch(err){
-  scans.pop();render();
+  scans.pop();
+  render();
   say('El escaneo no se guardó en Supabase: '+err.message,'err');
-  $('scan').focus();return;
+  $('scan').focus();
+  return;
  }
- if(plannedPositions>0 && same>plannedPositions) say(`Guardado en posición ${scan.position}. ADVERTENCIA: ${same} escaneos para un plan de ${plannedPositions} posiciones (${ref.pallets} pallets).`,'warn');
- else say(`Guardado en Supabase: ${rawCode} → búsqueda: ${code} · CMP PN ${ref.cmp} · posición ${scan.position}.`,'ok');
- $('scan').value='';render();$('scan').focus();
+
+ say(`Guardado: ${rawCode} → ${code} · Huella ${footprint} · Nivel ${level}.`,'ok');
+
+ $('scan').value='';
+ render();
+ $('scan').focus();
 }
 $('add').onclick=addScan;$('scan').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addScan();}});
 $('focus').onclick=()=>$('scan').focus();
-$('doubleMode').onchange=e=>{if(deliveryClosed){e.target.checked=doubleMode;return;}if(e.target.checked && $('clientName').value.trim().toLowerCase()!=='nexteer'){say('El modo doble solo está disponible para el cliente Nexteer.','warn');e.target.checked=false;return;}if(scans.length){say('Cambia el modo antes de registrar escaneos o borra los registros actuales.','warn');e.target.checked=doubleMode;return;}doubleMode=e.target.checked;render();};
+$('doubleMode').onchange=e=>{
+ e.target.checked=doubleMode;
+ say('Ahora el tipo de estiba se cambia tocando cada huella del mapa.','muted');
+};
 
 $('clientName').addEventListener('change',()=>{
- if($('clientName').value.trim().toLowerCase()!=='nexteer' && doubleMode){
-  doubleMode=false;
-  $('doubleMode').checked=false;
-  say('Se desactivó el modo doble porque el cliente no es Nexteer.','warn');
- }
  render();
  updatePlannedSummary();
 });
@@ -647,35 +786,135 @@ function updatePlannedSummary(){
  }).join('');
 }
 
- function render(){
- const cap=doubleMode?132:66;$('map').innerHTML='';
- for(let i=0;i<cap;i++){
-  const s=scans[i], el=document.createElement('div');el.className='slot'+(doubleMode?' double':'')+(s?' filled':'')+(s&&s.partial?' partial':'');
-  if(doubleMode){
-   el.innerHTML=`<div class="slotnum">Posición ${Math.floor(i/2)+1} · ${i%2===0?'A':'B'}</div><div class="half">${s?`<b>${s.cmp}</b><br>${s.barcode}${s.partial?'<br>Parcial':''}`:'—'}</div>`;
-   const next=scans[i+1];const second=document.createElement('div');second.className='half'+(next?' filled':'');second.innerHTML=next?`<b>${next.cmp}</b><br>${next.barcode}${next.partial?'<br>Parcial':''}`:'—';
-   el.appendChild(second);i++;
-  }else{
-   el.innerHTML=`<div class="slotnum">${i+1}</div><div class="slotcontent">${s?`<b>${s.cmp}</b><br>${s.barcode}${s.partial?'<br><span class="pill">Parcial</span>':''}`:'Libre'}</div>`;
+function render(){
+ $('map').innerHTML='';
+
+ for(let i=0;i<66;i++){
+  const s=scans.find(x=>Math.ceil(x.position/2)===i+1 && x.position%2===1);
+  const next=scans.find(x=>Math.ceil(x.position/2)===i+1 && x.position%2===0);
+  const isDouble=stackLayout[i]==='doble';
+  const el=document.createElement('div');
+
+  el.className='slot'+(isDouble?' double':'')+((s||next)?' filled':'');
+  el.dataset.footprint=i;
+
+  const first=document.createElement('div');
+  first.className=isDouble?'half':'slotcontent';
+  first.innerHTML=isDouble
+   ? `<div class="slotnum">Huella ${i+1} · A</div>${s?`<b>${s.cmp}</b><br>${s.barcode}`:'—'}`
+   : `<div class="slotnum">Huella ${i+1}</div>${s?`<b>${s.cmp}</b><br>${s.barcode}`:'Libre'}`;
+
+  el.appendChild(first);
+
+  if(isDouble){
+   const second=document.createElement('div');
+   second.className='half';
+   second.innerHTML=`<div class="slotnum">Huella ${i+1} · B</div>${next?`<b>${next.cmp}</b><br>${next.barcode}`:'—'}`;
+   el.appendChild(second);
   }
+
+el.addEventListener('click',async()=>{
+ if(deliveryClosed)return;
+
+ if(scans.some(x=>Math.ceil(Number(x.position)/2)===i+1)){
+  say('No puedes cambiar el tipo de una huella que ya tiene piezas asignadas.','warn');
+  return;
+ }
+
+ const previous=stackLayout[i];
+ stackLayout[i]=previous==='doble'?'sencillo':'doble';
+
+ if(activeSheetId){
+  try{
+   const {error}=await supabaseClient
+    .from('tr025_sheets')
+    .update({stack_layout:stackLayout})
+    .eq('id',activeSheetId);
+
+   if(error)throw error;
+  }catch(err){
+   stackLayout[i]=previous;
+   render();
+   say('No se pudo guardar el cambio: '+err.message,'err');
+   return;
+  }
+ }
+
+ render();
+ say(`Huella ${i+1}: modo ${stackLayout[i]} guardado.`,'ok');
+});
+
   $('map').appendChild(el);
  }
- $('totalScans').textContent=scans.length;$('freeSlots').textContent=cap-scans.length;
- const grouped=new Map();for(const s of scans){const k=s.barcode;if(!grouped.has(k))grouped.set(k,{...s,count:0});grouped.get(k).count++;}
+
+ const used=scans.length;
+ const capacity=stackLayout.reduce((total,type)=>total+(type==='doble'?2:1),0);
+ $('totalScans').textContent=used;
+ $('freeSlots').textContent=capacity-used;
+
+ const grouped=new Map();
+ for(const s of scans){
+  const k=s.barcode;
+  if(!grouped.has(k))grouped.set(k,{...s,count:0});
+  grouped.get(k).count++;
+ }
  $('refCount').textContent=grouped.size;
-updatePlannedSummary();
-$('summary').innerHTML=grouped.size?[...grouped.values()].map(r=>`<tr><td>${r.cmp}</td><td>${r.barcode}</td><td>${r.shipment.toLocaleString('es-MX')}</td><td>${r.pallets}</td><td>${r.plannedPositions}</td><td>${r.count}${r.count>r.plannedPositions?' ⚠':''}</td><td><button class="danger" data-remove-ref="${r.barcode}">Quitar referencia</button></td></tr>`).join(''):'<tr><td colspan="7" class="muted">Sin registros</td></tr>';
+ updatePlannedSummary();
+
+ $('summary').innerHTML=grouped.size
+  ? [...grouped.values()].map(r=>`<tr><td>${r.cmp}</td><td>${r.barcode}</td><td>${r.shipment.toLocaleString('es-MX')}</td><td>${r.pallets}</td><td>${r.plannedPositions}</td><td>${r.count}${r.count>r.plannedPositions?' ⚠':''}</td><td><button class="danger" data-remove-ref="${r.barcode}">Quitar referencia</button></td></tr>`).join('')
+  : '<tr><td colspan="7" class="muted">Sin registros</td></tr>';
 }
-$('summary').addEventListener('click',e=>{
+$('summary').addEventListener('click',async e=>{
  const btn=e.target.closest('button[data-remove-ref]');if(!btn)return;
  const code=btn.getAttribute('data-remove-ref');
  const count=scans.filter(s=>s.barcode===code).length;
  if(!confirm(`¿Quitar la referencia ${code} y sus ${count} escaneo(s) de la hoja?`))return;
- scans=scans.filter(s=>s.barcode!==code);
- scans.forEach((s,i)=>s.position=i+1);
- render();say(`Se quitó la referencia ${code}. Las posiciones restantes se recorrieron para cerrar los espacios.`,'ok');
+const removed=scans.filter(s=>s.barcode===code);
+scans=scans.filter(s=>s.barcode!==code);
+
+const positions=removed.map(s=>Number(s.position));
+const {error}=await supabaseClient
+ .from('tr025_scans')
+ .delete()
+ .in('id',removed.map(s=>s.id));
+
+if(error){
+ scans.push(...removed);
+ render();
+ say('No se pudieron eliminar los registros de Supabase: '+error.message,'err');
+ return;
+}
+
+render();
+say(`Se quitó la referencia ${code}. Las demás piezas conservaron sus posiciones.`,'ok');
 });
-$('clear').onclick=()=>{if(confirm('¿Borrar todos los escaneos de esta hoja?')){scans=[];render();say('Se borraron los escaneos.','muted');}};
+$('clear').onclick=async()=>{
+ if(deliveryClosed)return;
+ if(!confirm('¿Borrar todos los escaneos de esta hoja?'))return;
+
+ if(!activeSheetId){
+  scans=[];
+  render();
+  say('Se borraron los escaneos.','muted');
+  return;
+ }
+
+ try{
+  const {error}=await supabaseClient
+   .from('tr025_scans')
+   .delete()
+   .eq('sheet_id',activeSheetId);
+
+  if(error)throw error;
+
+  scans=[];
+  render();
+  say('Todos los escaneos fueron eliminados. La distribución de huellas se conservó.','ok');
+ }catch(err){
+  say('No se pudieron borrar los escaneos: '+err.message,'err');
+ }
+};
 $('export').onclick=()=>{
  const header=['Posicion','CMP PN','Referencia columna B','Shipment planned','Pallets columna D','Posiciones plan','Parcial'];
  const lines=[header,...scans.map(s=>[s.position,s.cmp,s.barcode,s.shipment,s.pallets,s.plannedPositions,s.partial?'Sí':'No'])];
